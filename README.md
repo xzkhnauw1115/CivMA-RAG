@@ -1,97 +1,84 @@
 # CivMA-RAG
 面向土木工程有限元仿真的物理信息增强多智能体 RAG 框架。/A physics-informed multi-agent RAG framework for civil engineering finite element simulation.
-The system combines:
 
-- a Manager agent for workflow control;
-- a Coder agent for script generation and full-script repair;
-- a Researcher agent for physical validation;
-- a UserProxy/tool gate for controlled tool execution;
-- a local RAG knowledge base for FEniCS patterns, error handling, and physics checks;
-- a Flask-based FEniCS execution bridge that submits generated scripts to a WSL Ubuntu FEniCS runtime.
-
-This repository is prepared for academic code release. Runtime caches, job outputs, vector databases, generated scripts, API keys, and copyrighted standards are intentionally excluded.
-
-## 1. Repository Layout
+## Directory Structure
 
 ```text
 .
-├── all_in_one.py                         # Main entry: FEniCS bridge + multi-agent workflow + optional Gradio UI
-├── chat_bot_multiagent.py                # Multi-agent system, RAG tools, script gate, statistics hooks
+├── all_in_one.py
+├── chat_bot_multiagent.py
 ├── config/
-│   ├── config.json                       # Local runtime config, uses environment-variable placeholder for API key
-│   └── config.example.json               # Public example config
-├── data/
-│   └── local_knowledge/                  # Active local RAG knowledge base
-│       ├── KNOWLEDGE_INDEX.md
-│       ├── physics_validation_rules.md
-│       ├── fenics2019_reliable_patterns.md
-│       ├── fenics2019_error_fix_matrix.md
-│       ├── failure_case_review.md
-│       ├── bridge_*_guardrails.md
-│       └── golden_scripts/               # Reusable FEniCS/Python recipe snippets
+│   ├── config.example.json
+│   └── config.json                 # local file; ignored by Git
+├── data/local_knowledge/           # default active generic RAG scope
+│   ├── KNOWLEDGE_INDEX.md
+│   ├── fenics2019_error_fix_matrix.md
+│   ├── fenics2019_reliable_patterns.md
+│   ├── physics_validation_rules.md
+│   └── golden_scripts/
+│       └── recipe_fenics2019_3d_elastic_dg0_initial_stress.py
+├── examples/reference_bridge/      # optional paper/reference reproduction materials; excluded from default RAG
+│   ├── README.md
+│   ├── guardrails/
+│   └── scripts/
 ├── src/
 │   ├── __init__.py
-│   └── fenics_mcp_server.py              # Flask execution server, submits scripts to WSL/FEniCS
-├── temp_scripts/
-│   └── fenics_drafts/.gitkeep            # Runtime script folder placeholder
-├── environment.yml                       # Conda environment for the Python manager side
-├── .env.example                          # Environment variable example
+│   ├── agent_prompts.py
+│   ├── agent_workflow.py
+│   ├── config_loader.py
+│   ├── fenics_mcp_server.py
+│   ├── rag_retriever.py
+│   ├── result_parser.py
+│   ├── script_workspace.py
+│   ├── statistics_store.py
+│   └── workflow_gate.py
+├── tests/
+├── temp_scripts/fenics_drafts/.gitkeep
+├── environment.yml
+├── .env.example
 └── .gitignore
 ```
 
-## 2. What Is Not Included
+## Two-Layer Runtime
 
-The following are generated locally and should not be committed:
+There are two environments.
 
-- `state/`: runtime statistics, vector DB, embedding caches;
-- `fenics_jobs/`: simulation job outputs;
-- `temp_scripts/fenics_drafts/current_fenics_script.py`: current generated script;
-- `__pycache__/`, `.cache/`: Python and model caches;
-- raw standards/PDF documents with redistribution restrictions;
-- API keys or other credentials.
+### 1. Windows/Python Manager Environment
 
-## 3. Requirements
+This environment runs:
 
-There are two runtime layers.
-
-### 3.1 Python Manager Environment
-
-The Conda environment in `environment.yml` runs:
-
-- AutoGen-based agents;
-- local RAG retrieval;
+- AutoGen agents;
+- local deterministic keyword RAG;
 - Gradio UI;
 - Flask bridge server;
-- script validation/gating logic.
+- unit tests.
 
-Create the environment:
+Install it with:
 
 ```bash
 conda env create -f environment.yml
 conda activate fem-agent-rag
 ```
 
-### 3.2 FEniCS Runtime
+### 2. WSL/FEniCS Runtime
 
-The Conda environment above is only for the Python manager, RAG, agents, Gradio, and Flask bridge. It does **not** install `dolfin`.
-
-Generated simulation scripts target:
+FEniCS/dolfin is not installed in the Windows manager environment. Generated simulation scripts target:
 
 ```text
 FEniCS 2019.1.0 / old dolfin
 ```
 
-On Windows, the default integration path is:
+Default execution path:
 
 ```text
 Windows Python manager
-  -> Flask bridge server
+  -> local Flask bridge
   -> WSL Ubuntu
   -> conda environment named fenics
-  -> python script with `from dolfin import *`
+  -> generated Python script using `from dolfin import *`
 ```
 
-The default runtime settings are in `config/config.json`:
+Default runtime config:
 
 ```json
 "fenics_runtime": {
@@ -100,38 +87,16 @@ The default runtime settings are in `config/config.json`:
   "conda_env": "fenics",
   "python_command": "python",
   "fallback_python_command": "python3",
-  "job_timeout_sec": 1800
+  "job_timeout_sec": 1800,
+  "debug_include_absolute_paths": false,
+  "allow_remote_bind": false,
+  "access_token": ""
 }
 ```
 
-The bridge server automatically searches these WSL conda startup files:
-
-```text
-$HOME/miniconda3/etc/profile.d/conda.sh
-$HOME/anaconda3/etc/profile.d/conda.sh
-/opt/conda/etc/profile.d/conda.sh
-```
-
-If one is found, it runs:
+Inside WSL Ubuntu, one reproducible installation path is:
 
 ```bash
-conda activate fenics
-python generated_script.py
-```
-
-If no conda startup file is found, it falls back to:
-
-```bash
-python3 generated_script.py
-```
-
-#### Option A: Install FEniCS in a WSL conda environment
-
-Inside WSL Ubuntu:
-
-```bash
-# Install Miniconda first if conda is not available.
-# Then create the FEniCS runtime environment:
 conda create -n fenics -c conda-forge python=3.8 fenics=2019.1.0 -y
 conda activate fenics
 python - <<'PY'
@@ -140,45 +105,25 @@ print('dolfin ok')
 PY
 ```
 
-If your environment name is not `fenics`, change `fenics_runtime.conda_env` in `config/config.json`.
+If your WSL environment already has `dolfin` in `python3`, the bridge can fall back to `python3`.
 
-#### Option B: Use system Python inside WSL
+## Configuration
 
-If `python3` in WSL already has `dolfin`:
+Create local config from the example.
+
+PowerShell:
+
+```powershell
+Copy-Item config/config.example.json config/config.json
+```
+
+Bash:
 
 ```bash
-python3 - <<'PY'
-from dolfin import *
-print('dolfin ok')
-PY
+cp config/config.example.json config/config.json
 ```
 
-Then you can leave conda unused; the bridge will fall back to `python3` when conda is not found.
-
-#### Preflight check
-
-Before spending LLM/API calls, `all_in_one.py` runs a real FEniCS preflight:
-
-```bash
-from dolfin import *
-print('FENICS_OK')
-```
-
-If this fails, fix the WSL/FEniCS runtime first, or run with an existing compatible backend:
-
-```bash
-python all_in_one.py --no-server
-```
-
-## 4. API Key Configuration
-
-The public config never stores a real API key. It uses an environment variable placeholder:
-
-```json
-"api_key": "${DEEPSEEK_API_KEY}"
-```
-
-Set the key before running.
+Set the LLM key in the process environment. The code does not auto-load `.env` files.
 
 PowerShell:
 
@@ -192,215 +137,194 @@ Bash:
 export DEEPSEEK_API_KEY="your_api_key_here"
 ```
 
-Do not commit `.env`, local config files, or real keys.
+If the key is missing, the workflow fails before an LLM request is made.
 
-## 5. Configuration
+## CLI Usage
 
-The active config is intentionally minimal:
+Show help:
 
-```json
-{
-  "fenics_server": {
-    "host": "127.0.0.1",
-    "port": 5000,
-    "url": "http://127.0.0.1:5000"
-  },
-  "fenics_runtime": {
-    "backend": "wsl",
-    "wsl_distro": "Ubuntu",
-    "conda_env": "fenics",
-    "python_command": "python",
-    "fallback_python_command": "python3",
-    "job_timeout_sec": 1800
-  },
-  "autogen": {
-    "llm_config": {
-      "config_list": [
-        {
-          "model": "deepseek-chat",
-          "base_url": "https://api.deepseek.com/v1",
-          "api_key": "${DEEPSEEK_API_KEY}",
-          "max_new_tokens": 12000
-        }
-      ],
-      "temperature": 0.6,
-      "timeout": 300
-    }
-  }
-}
+```bash
+python all_in_one.py --help
 ```
 
-Only these keys are used by the current startup path:
-
-- `fenics_server.host`
-- `fenics_server.port`
-- `fenics_server.url`
-- `fenics_runtime.backend`
-- `fenics_runtime.wsl_distro`
-- `fenics_runtime.conda_env`
-- `fenics_runtime.python_command`
-- `fenics_runtime.fallback_python_command`
-- `fenics_runtime.job_timeout_sec`
-- `autogen.llm_config.config_list`
-- `autogen.llm_config.temperature`
-- `autogen.llm_config.timeout`
-
-Old training, memory, fine-tuning, and curriculum fields were removed because they are not required to start or reproduce the released workflow.
-
-## 6. Running the System
-
-### 6.1 Launch UI and Backend
+Default UI mode:
 
 ```bash
 python all_in_one.py
 ```
 
-This starts:
-
-- the FEniCS execution server;
-- the multi-agent workflow;
-- a local Gradio interface.
-
-Default URLs:
-
-```text
-FEniCS bridge: http://127.0.0.1:5000
-Gradio UI:     http://127.0.0.1:7860
-```
-
-If a port is occupied, the program attempts to use the next available port.
-
-### 6.2 Run a Single Request from CLI
+Server-only mode:
 
 ```bash
-python all_in_one.py --demo "Generate a FEniCS 2019 script for a simple beam and run it."
+python all_in_one.py --server-only
 ```
 
-For long prompts:
+Compatibility server-only mode without Gradio:
+
+```bash
+python all_in_one.py --no-gradio
+```
+
+Single prompt:
+
+```bash
+python all_in_one.py --demo "Generate and run a simple FEniCS beam script."
+```
+
+Prompt from file:
 
 ```bash
 python all_in_one.py --demo-file request.txt
 ```
 
-### 6.3 Interactive CLI Mode
+Interactive CLI:
 
 ```bash
 python all_in_one.py --interactive
 ```
 
-### 6.4 Use an Existing Backend
-
-If the FEniCS server is already running:
+Use an already running bridge server:
 
 ```bash
 python all_in_one.py --no-server
 ```
 
-If preflight should be skipped:
+Skip WSL/FEniCS preflight only when you know the backend is valid:
 
 ```bash
 python all_in_one.py --skip-fenics-preflight
 ```
 
-## 7. Workflow Summary
+Choose ports:
 
-The intended workflow is:
-
-```text
-User request
-  -> Manager assigns task
-  -> Coder performs local RAG retrieval
-  -> Coder writes a complete script to temp_scripts/fenics_drafts/current_fenics_script.py
-  -> Tool gate checks script completeness and execution order
-  -> FEniCS bridge runs the script
-  -> Researcher validates physical plausibility using RAG rules
-  -> If failed, Coder performs RAG again and fully rewrites the script
-  -> If passed, Manager summarizes outputs and statistics
+```bash
+python all_in_one.py --fenics-port 5001 --port 7861
 ```
 
-The system intentionally avoids line-by-line partial fixing for generated simulation scripts. Failed scripts are repaired by full rewrite after another RAG lookup, which reduces accumulated corruption and tool-call disorder.
+Print statistics:
 
-## 8. Local RAG Knowledge Base
+```bash
+python all_in_one.py --show-stats
+```
 
-The active knowledge base is under:
+Unsupported local-only mode:
+
+```bash
+python all_in_one.py --disable-remote
+```
+
+This exits early because this release has no local LLM fallback.
+
+## Strict Workflow State
+
+The Coder tool workflow is gated as:
+
+```text
+RAG -> reset -> append -> status -> run -> validation
+```
+
+The concrete phases are:
+
+```text
+need_rag -> need_reset -> need_append -> need_status -> need_run
+```
+
+After every append, an explicit status check is required. A failed status check returns to RAG and requires a full rewrite. The default maximum full rewrite count is `5` and is configured by `workflow.max_rewrites`.
+
+## RAG Scope
+
+Default RAG mode is deterministic local keyword retrieval from:
 
 ```text
 data/local_knowledge/
 ```
 
-It contains:
+The default active knowledge is generic only. It excludes:
 
-- stable FEniCS 2019 API patterns;
-- known error-to-rewrite rules;
-- physical validation rules;
-- task-specific modeling guardrails;
-- golden recipe snippets.
+- `examples/`
+- `state/`
+- `fenics_jobs/`
+- archive/generated-output directories
 
-The knowledge base is sanitized for open release. It does not include raw copyrighted standards, project-private bridge names, or runtime job histories.
+`examples/reference_bridge/` contains optional reference reproduction material. It includes case parameters and scripts, so it is not default active RAG knowledge and must not be described as generic rules.
 
-## 9. Output Locations
+Semantic RAG is not enabled in this release. ChromaDB and sentence-transformers are intentionally not included in `environment.yml`.
 
-During runtime, generated files are created locally:
+## Output Directories
+
+Runtime outputs are generated under ignored paths:
 
 ```text
-temp_scripts/fenics_drafts/current_fenics_script.py
+state/
 fenics_jobs/
-state/run_statistics.json
+temp_scripts/fenics_drafts/current_fenics_script.py
 ```
 
-These paths are ignored by Git. They are useful for debugging but should not be treated as source files.
+Do not commit runtime jobs, generated scripts, logs, or vector databases.
 
-## 10. Safety and Reproducibility Notes
+## Safety Notes
 
-Before publishing or submitting a release, check:
+- The bridge executes generated Python code. Keep it on `127.0.0.1`.
+- Binding the bridge to non-loopback addresses is refused unless explicitly enabled with a token.
+- Do not commit API keys.
+- Do not publish copyrighted standards or private input data.
+- Reference examples are for reproducibility only and do not establish field or experimental validation.
+
+## Tests
+
+Run offline tests that do not require WSL, FEniCS, or a remote LLM:
+
+```bash
+pytest -q
+```
+
+Compile check:
+
+```bash
+python -m compileall .
+```
+
+Inspect CLI:
+
+```bash
+python all_in_one.py --help
+```
+
+Suggested secret scan before release:
 
 ```bash
 rg 'sk-[A-Za-z0-9]+' .
 rg 'api_key|secret|password|token|Bearer|Authorization' .
 ```
 
-The expected public config should contain only:
-
-```text
-${DEEPSEEK_API_KEY}
-```
-
-If a real key was ever committed to Git history, revoke it from the provider dashboard and publish from a clean repository or scrub history before release.
-
-## 11. Common Problems
-
-### Gradio port is occupied
-
-Use another port:
-
-```bash
-python all_in_one.py --port 7861
-```
+## Common Problems
 
 ### FEniCS preflight fails
 
 Check WSL and dolfin:
 
 ```bash
-wsl -d Ubuntu -e bash -lc "python3 - <<'PY'
+wsl -d Ubuntu -e bash -lc "source ~/miniconda3/etc/profile.d/conda.sh && conda activate fenics && python - <<'PY'
 from dolfin import *
 print('dolfin ok')
 PY"
 ```
 
-### The generated script is not executed
+If your distribution or conda environment has a different name, update `config/config.json`.
 
-Check the tool gate state in the console. The expected order is:
+### Missing API key
 
-```text
-RAG -> reset_current_fenics_script -> append_current_fenics_script -> status -> run_current_fenics_script
-```
+Set `DEEPSEEK_API_KEY` in the process environment before starting the workflow.
 
-### RAG returns irrelevant knowledge
+### The bridge refuses non-localhost binding
 
-Check `data/local_knowledge/KNOWLEDGE_INDEX.md` and the direct-priority routing in `chat_bot_multiagent.py`.
+This is intentional. The service executes generated code and must not be exposed to untrusted networks.
 
-## 12. Citation / Academic Use
+### RAG cannot find a reference example
 
-If this repository accompanies a paper, cite the paper and describe the system as a multi-agent RAG workflow for automated finite-element script generation and physical validation. The released code contains the framework, open local knowledge cards, and reproducible templates, but excludes private runtime data and restricted documents.
+Default RAG intentionally excludes `examples/reference_bridge/`. Use those files manually only for explicit reference reproduction tasks.
+
+## Academic Citation
+
+Paper citation information will be added after publication. Do not invent a DOI, author list, title, or result claim before the paper metadata is final.
 
