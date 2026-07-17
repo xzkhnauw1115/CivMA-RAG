@@ -1,0 +1,27 @@
+﻿name: fem-agent-rag
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.9
+  - pip
+  - numpy
+  - scipy
+  - requests
+  - urllib3
+  - beautifulsoup4
+  - flask
+  - pandas
+  - pip:
+      # Legacy AutoGen package imported as `autogen` by this project.
+      - pyautogen==0.2.35
+      # UI and RAG dependencies used by all_in_one.py / chat_bot_multiagent.py.
+      - gradio==3.50.2
+      - chromadb==0.4.24
+      - sentence-transformers==2.7.0
+
+# Notes:
+# - This environment runs the Python manager, RAG, multi-agent workflow, and Flask bridge server.
+# - FEniCS/dolfin 2019.1.0 is expected inside WSL Ubuntu, because generated scripts are executed there.
+# - Set DEEPSEEK_API_KEY in your shell before starting the system.
